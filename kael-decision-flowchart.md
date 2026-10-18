@@ -57,6 +57,20 @@ flowchart TD
     %% @fact elderly ELDERQ PELDER HOWFLIRT ELDERREJECT
     %% @fact party PM TASTEDONE
     %% @fact bothprefs BOTH RISK
+    %% Stats tab: who Kael meets (first matching answer wins) and extra flags
+    %% @category ALIVE "No" Non-living (undead/construct)
+    %% @category HUM "No" Non-humanoid creature
+    %% @category CHILD "Yes" Kael's possible child
+    %% @category FEMALE "Yes" Woman
+    %% @category FEMALE "No" Man / other humanoid
+    %% @flag DEADPARTY "Yes" party member
+    %% @flag BEASTPARTY "Yes" party member
+    %% @flag OPARTY "Yes" party member
+    %% @flag PM "Yes" party member
+    %% @flag DAUGHTERPARTY "Yes" party member
+    %% @flag AGE "Yes" minor
+    %% @flag MAGE "Yes" minor
+    %% @flag CMINOR "Yes" minor
 
     %% ================= NODES =================
     subgraph S_ENCOUNTER["01-02 · Encounter"]

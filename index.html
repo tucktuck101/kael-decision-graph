@@ -86,6 +86,14 @@
   .score.grudge { background: var(--intent); color: var(--intent-fg); }
   .status { font-size: .85rem; color: var(--muted); }
   #error { max-width: 800px; margin: 2rem auto; }
+  #stats { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+  table.stats { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.stats th, table.stats td { padding: .35rem .5rem; border-bottom: 1px solid var(--border); text-align: left; }
+  table.stats td.n, table.stats th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  table.stats td.zero { color: var(--muted); }
+  .bar { height: .55rem; background: var(--accent); border-radius: .3rem; min-width: 2px; }
+  ol.route { margin: .4rem 0 .6rem; padding-left: 1.5rem; font-size: .9rem; max-height: 22rem; overflow: auto; }
+  ol.route .ans { color: var(--accent); font-weight: 600; }
   code { background: var(--border); padding: .05rem .3rem; border-radius: .25rem; }
 </style>
 </head>
@@ -96,6 +104,7 @@
     <button data-tab="walk" class="active">Walk</button>
     <button data-tab="map">Map</button>
     <button data-tab="party">Party</button>
+    <button data-tab="stats">Stats</button>
   </nav>
   <span id="health">Loading…</span>
 </header>
@@ -146,6 +155,8 @@
     </div>
     <div id="members" style="display:flex;flex-direction:column;gap:.75rem"></div>
   </section>
+
+  <section id="stats" class="hidden"></section>
 </main>
 
 <script type="module">
@@ -166,7 +177,7 @@ function parse(md) {
   if (!block) throw new Error(`No mermaid block found in ${SOURCE}.`);
   const g = { code: block, nodes: new Map(), out: new Map(), into: new Map(), sections: [], classes: new Map(),
     classDefs: [], set: new Map(), dispatch: new Map(), start: {}, events: [], max: Infinity,
-    target: new Map(), score: new Map(), check: new Map(), fact: new Map(), unparsed: [] };
+    target: new Map(), score: new Map(), check: new Map(), fact: new Map(), category: [], flag: [], unparsed: [] };
   let cur = null;
   const push = (map, k, v) => (map.get(k) || map.set(k, []).get(k)).push(v);
   for (const raw of block.split("\n")) {
@@ -205,6 +216,7 @@ function directive(g, kind, arg, push) {
     case "score": m = arg.match(/^(\w+)\s+(=?)([+-]?\d+)\s+(target|pick)$/); g.score.set(m[1], { absolute: !!m[2], value: +m[3], who: m[4] }); break;
     case "check": m = arg.match(/^(\w+)\s+"(.*)"\s*(<=|>=|==|<|>)\s*(-?\d+)$/); push(g.check, m[1], { label: m[2], op: m[3], n: +m[4] }); break;
     case "fact": { const [name, ...ids] = arg.split(/\s+/); ids.forEach((id) => g.fact.set(id, name)); break; }
+    case "category": case "flag": m = arg.match(/^(\w+)\s+"(.*)"\s+(.+)$/); g[kind].push({ from: m[1], label: m[2], name: m[3] }); break;
     default: g.unparsed.push(`@${kind} ${arg}`);
   }
 }
@@ -238,7 +250,7 @@ function successors(g, [id, st]) {
   for (const e of g.out.get(id) || []) {
     if (forced && e !== f) continue;
     const ns = nextState(g, st, e);
-    res.push([e.to, ns]);
+    res.push([e.to, ns, e]);
   }
   return res;
 }
@@ -267,6 +279,8 @@ function validate(g) {
     const vals = (g.out.get(id) || []).map((e) => answer(e.label)).sort().join(",");
     if (vals !== "no,yes") issues.push(`@fact ${f}: answers at ${id} must start with Yes / No`);
   }
+  for (const c of [...g.category, ...g.flag])
+    if (!(g.out.get(c.from) || []).some((e) => e.label === c.label)) issues.push(`Stats rule ${c.from} "${c.label}" matches no edge`);
   if (g.unparsed.length) issues.push(...g.unparsed.map((l) => `Unparsed line: ${l}`));
   const all = explore(g, ["START", { ...g.start }]);
   const reached = new Set([...all.values()].map(([id]) => id));
@@ -577,12 +591,110 @@ $("#add-member").onclick = () => {
   $("#new-member").value = ""; $("#new-royal").checked = false;
 };
 
+// ---------------- Stats ----------------
+// Loop-free routes: START to an ending, each node at most once, only routes the walker can take.
+function routeStats(g) {
+  const ends = [...g.nodes.values()].filter((n) => n.kind === "end").map((n) => n.id).sort();
+  const zero = () => Object.fromEntries(ends.map((e) => [e, 0]));
+  const k = (from, label) => from + "\u0000" + label;
+  const cat = new Map(g.category.map((c) => [k(c.from, c.label), c.name]));
+  const flag = new Map(g.flag.map((c) => [k(c.from, c.label), c.name]));
+  const byEnd = zero(), byCat = new Map();
+  let total = 0, shortest = null, longest = null;
+  const visited = new Set(["START"]), path = [], t0 = performance.now();
+  (function dfs(s, c, flags) {
+    const id = s[0];
+    if (g.nodes.get(id).kind === "end") {
+      total++; byEnd[id]++;
+      const key = [c || "Other", ...flags].join(" · ");
+      (byCat.get(key) || byCat.set(key, zero()).get(key))[id]++;
+      if (!shortest || path.length < shortest.length) shortest = [...path];
+      if (!longest || path.length > longest.length) longest = [...path];
+      return;
+    }
+    for (const t of successors(g, s)) {
+      if (visited.has(t[0])) continue;
+      const e = t[2], ek = k(e.from, e.label), f = flag.get(ek);
+      visited.add(t[0]); path.push(e);
+      dfs(t, c || cat.get(ek) || null, f && !flags.includes(f) ? [...flags, f] : flags);
+      path.pop(); visited.delete(t[0]);
+    }
+  })(["START", { ...g.start }], null, []);
+  return { ends, total, byEnd, byCat, shortest, longest, ms: performance.now() - t0, loops: loopGroups(g) };
+}
+// Groups of nodes that can lead back into themselves (strongly connected components).
+function loopGroups(g) {
+  const index = new Map(), low = new Map(), stack = [], on = new Set(), groups = [];
+  let i = 0;
+  const visit = (v) => {
+    index.set(v, i); low.set(v, i); i++; stack.push(v); on.add(v);
+    for (const e of g.out.get(v) || []) {
+      if (!index.has(e.to)) { visit(e.to); low.set(v, Math.min(low.get(v), low.get(e.to))); }
+      else if (on.has(e.to)) low.set(v, Math.min(low.get(v), index.get(e.to)));
+    }
+    if (low.get(v) === index.get(v)) {
+      const comp = [];
+      let w;
+      do { w = stack.pop(); on.delete(w); comp.push(w); } while (w !== v);
+      if (comp.length > 1) groups.push(comp);
+    }
+  };
+  for (const id of g.nodes.keys()) if (!index.has(id)) visit(id);
+  return groups.sort((a, b) => a.length - b.length);
+}
+function replay(route) {
+  newWalk();
+  for (const e of route) if (walk.node === e.from) go(e);
+  switchTab("walk");
+}
+let statsRendered = false;
+function renderStats() {
+  const s = routeStats(G), box = $("#stats"), pct = (n) => (s.total ? (100 * n) / s.total : 0);
+  const text = (id) => G.nodes.get(id).text;
+  const num = (n) => el("td", { className: "n" + (n ? "" : " zero"), textContent: n.toLocaleString() });
+  const th = (t, n) => el("th", { className: n ? "n" : "", textContent: t });
+
+  const summary = el("div", { className: "card" },
+    el("h2", { textContent: `${s.total.toLocaleString()} possible routes` }),
+    el("p", { className: "status", textContent: `Loop-free routes from "${text("START")}" to an ending: each node is visited at most once, and only routes the walker can actually take count (combat intent, who Kael is dealing with and remembered facts are respected). With loops allowed the number is infinite. Calculated from the current graph in ${Math.round(s.ms)} ms.` }));
+
+  const endRows = s.ends.map((e) => el("tr", {}, el("td", { textContent: text(e) }), num(s.byEnd[e]),
+    el("td", { className: "n", textContent: pct(s.byEnd[e]).toFixed(1) + "%" }),
+    el("td", { style: "width:35%" }, el("div", { className: "bar", style: `width:${pct(s.byEnd[e])}%` }))));
+  const endings = el("div", { className: "card" }, el("h2", { textContent: "By ending" }),
+    el("table", { className: "stats" }, el("tr", {}, th("Ending"), th("Routes", 1), th("Share", 1), th("")), ...endRows));
+
+  const cats = [...s.byCat.entries()].map(([name, row]) => [name, row, Object.values(row).reduce((a, b) => a + b, 0)]).sort((a, b) => b[2] - a[2]);
+  const short = (e) => text(e).split(" - ")[0];
+  const who = el("div", { className: "card" }, el("h2", { textContent: "By who Kael meets" }),
+    el("table", { className: "stats" }, el("tr", {}, th("Who"), ...s.ends.map((e) => th(short(e), 1)), th("Total", 1)),
+      ...cats.map(([name, row, t]) => el("tr", {}, el("td", { textContent: name }), ...s.ends.map((e) => num(row[e])), el("td", { className: "n" }, el("b", { textContent: t.toLocaleString() }))))));
+
+  const routeCard = (title, route) => {
+    const end = route[route.length - 1].to;
+    const btn = el("button", { className: "btn small", textContent: "Walk this route" });
+    btn.onclick = () => replay(route);
+    return el("div", { className: "card" }, el("h2", { textContent: `${title}: ${route.length + 1} nodes, ends at ${short(end)}` }),
+      el("ol", { className: "route" }, ...route.map((e) => el("li", {}, el("span", { textContent: text(e.from) + " " }), el("span", { className: "ans", textContent: e.label ? `→ ${e.label}` : "→" }))),
+        el("li", {}, el("b", { textContent: text(end) }))), btn);
+  };
+
+  const secTitle = (id) => G.sections.find((x) => x.id === G.nodes.get(id).section)?.title || "";
+  const loops = el("div", { className: "card" }, el("h2", { textContent: `Loops: ${s.loops.length} group(s) of nodes that can lead back into themselves` }),
+    el("ul", {}, ...s.loops.map((grp) => el("li", { textContent: grp.length <= 12
+      ? `${grp.length} nodes: ${grp.map(text).join(" · ")}`
+      : `${grp.length} nodes across ${[...new Set(grp.map(secTitle))].join(", ")}` }))));
+
+  box.replaceChildren(summary, endings, who, routeCard("Shortest route", s.shortest), routeCard("Longest route", s.longest), loops);
+}
+
 // ---------------- Tabs ----------------
 let mapRendered = false;
 function switchTab(tab) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  for (const t of ["walk", "map", "party"]) $("#" + t).classList.toggle("hidden", t !== tab);
+  for (const t of ["walk", "map", "party", "stats"]) $("#" + t).classList.toggle("hidden", t !== tab);
   if (tab === "map") { if (!mapRendered) { mapRendered = true; renderMap("ALL"); } else markTrail(); }
+  if (tab === "stats" && !statsRendered) { statsRendered = true; renderStats(); }
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
 $("#back").onclick = back;

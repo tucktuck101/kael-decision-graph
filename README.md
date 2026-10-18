@@ -24,7 +24,12 @@ How Kael, a D&D character, decides what to do when he meets a creature: whether 
   - Click a node to see where it comes from and where it leads, or to start walking from there.
   - Your current walk is highlighted.
 - **Party**: a relationship score for each party member, saved in your browser.
-  - The header shows a health check that runs on every load. It confirms every node can be reached and every path reaches an ending.
+- **Stats**: every possible loop-free route, recalculated from the current graph.
+  - Counts by ending and by who Kael meets.
+  - The shortest and longest routes, each with a "Walk this route" button.
+  - The groups of nodes that can loop back on themselves.
+
+The header shows a health check that runs on every load. It confirms every node can be reached and every path reaches an ending.
 
 ## Party relationship score
 
@@ -58,6 +63,7 @@ The lines at the top of the Mermaid block that start with `%% @` are comments, s
 - the score events (`@event`) and where scores change (`@score`, `@target`)
 - which answers the score can suggest (`@check`)
 - facts that can't change within an encounter (`@fact`), such as whether she's elderly or a party member. The first answer is remembered and later questions about the same fact are answered automatically.
+- how the Stats tab groups routes by who Kael meets (`@category`) and adds labels such as "party member" or "minor" (`@flag`)
 
 If you rename or remove a node, update the matching `@` lines. The health check flags any rule that points at a missing node or answer.
 
