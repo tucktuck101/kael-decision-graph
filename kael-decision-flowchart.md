@@ -53,6 +53,10 @@ flowchart TD
     %% @check HITCHECK "No" >-5
     %% @check STILLGRUDGE "Yes" <=-5
     %% @check STILLGRUDGE "No, he cools off" >-5
+    %% Facts that can't change within an encounter: the first answer is reused for the rest of the walk
+    %% @fact elderly ELDERQ PELDER HOWFLIRT ELDERREJECT
+    %% @fact party PM TASTEDONE
+    %% @fact bothprefs BOTH RISK
 
     %% ================= NODES =================
     subgraph S_ENCOUNTER["01-02 · Encounter"]
@@ -67,15 +71,15 @@ flowchart TD
         FOOD{"Is it food?"}
         FEMALE{"Does it look female?"}
         CHILD{"Could they be Kael's child?"}
-        DAUGHTERPARTY{"Are they a party member?"}
-        DMINOR{"Still a minor?"}
-        PRINCESSSTART["Party royalty: their score started at +5"]
+        CMINOR{"Are they a minor?"}
         CHILDKILL{"Are they trying to kill him?"}
-        KMINOR{"Are they a minor?"}
+        DAUGHTERPARTY{"Are they a party member?"}
+        PRINCESSSTART["Party royalty: their score started at +5"]
+        ADULTKILL{"Are they trying to kill him?"}
         ROYAL{"Son or daughter?"}
         PRINCESS["Treat her like a princess. Forever."]
         PRINCE["Treat him like a prince. Forever."]
-        AGE{"Age group?"}
+        AGE{"Is she a minor?"}
         PM{"02 - Is she a party member?"}
         FIRST{"First meeting?"}
         PELDER{"Is she elderly?"}
@@ -202,6 +206,9 @@ flowchart TD
         HEALERPARTY{"Was it a party member?"}
         HEALERPLUS["+5 to the healer's score. He owes them his life."]
         MERCY["Beg for mercy"]
+        UNDERSTAND{"Can it understand begging?"}
+        PLAYDEAD["Play dead"]
+        PDW{"Did playing dead work?"}
         MW{"Did it work?"}
         SERVANT["Feign servitude and seek escape"]
         MODE{"Resume combat objective"}
@@ -284,21 +291,21 @@ flowchart TD
     OPARTY -->|Yes| PSCORE
     OPARTY -->|No| OTHERHOST
     FEMALE -->|Yes| AGE
-    CHILD -->|Yes| DAUGHTERPARTY
-    DAUGHTERPARTY -->|Yes| DMINOR
-    DMINOR -->|No| PRINCESSSTART
-    PRINCESSSTART --> PSCORE
-    DMINOR -->|Yes| CHILDKILL
-    DAUGHTERPARTY -->|No| CHILDKILL
+    CHILD -->|Yes| CMINOR
+    CMINOR -->|Yes| CHILDKILL
+    CHILDKILL -->|Yes, defend only| MRECON
     CHILDKILL -->|No| ROYAL
+    CMINOR -->|No| DAUGHTERPARTY
+    DAUGHTERPARTY -->|Yes| PRINCESSSTART
+    PRINCESSSTART --> PSCORE
+    DAUGHTERPARTY -->|No| ADULTKILL
+    ADULTKILL -->|Yes, normal hostile rules| KILLINTENT
+    ADULTKILL -->|No| ROYAL
     ROYAL -->|Daughter| PRINCESS
     ROYAL -->|Son| PRINCE
     PRINCESS --> E3
     PRINCE --> E3
-    CHILDKILL -->|Yes| KMINOR
-    KMINOR -->|Yes, defend only| MRECON
-    KMINOR -->|No, normal hostile rules| OTHERHOST
-    AGE -->|Minor| MINORHOST
+    AGE -->|Yes| MINORHOST
     MINORHOST -->|"No (meeting them again as an adult is a new encounter)"| E5
     MINORHOST -->|Yes| MRECON
     MRECON --> MRR
@@ -306,8 +313,7 @@ flowchart TD
     MRR -->|Still hostile| MHARDER
     MHARDER --> MRECON
     MRR -->|Physically attacks, defend only| DEFENDINTENT
-    AGE -->|Adult| PM
-    AGE -->|Elder| PM
+    AGE -->|No| PM
 
     PM -->|Yes| FIRST
     FIRST -->|Yes| PELDER
@@ -486,7 +492,12 @@ flowchart TD
     HEALERPLUS --> MODE
     HEALERPARTY -->|No| MODE
     HEALED -->|No| E2
-    OTHERS -->|No| MERCY
+    OTHERS -->|No| UNDERSTAND
+    UNDERSTAND -->|Yes| MERCY
+    UNDERSTAND -->|"No (beast or mindless)"| PLAYDEAD
+    PLAYDEAD --> PDW
+    PDW -->|"Yes, it loses interest"| E5
+    PDW -->|No| E2
     MERCY --> MW
     MW -->|No| E2
     MW -->|Yes| SERVANT

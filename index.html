@@ -166,7 +166,7 @@ function parse(md) {
   if (!block) throw new Error(`No mermaid block found in ${SOURCE}.`);
   const g = { code: block, nodes: new Map(), out: new Map(), into: new Map(), sections: [], classes: new Map(),
     classDefs: [], set: new Map(), dispatch: new Map(), start: {}, events: [], max: Infinity,
-    target: new Map(), score: new Map(), check: new Map(), unparsed: [] };
+    target: new Map(), score: new Map(), check: new Map(), fact: new Map(), unparsed: [] };
   let cur = null;
   const push = (map, k, v) => (map.get(k) || map.set(k, []).get(k)).push(v);
   for (const raw of block.split("\n")) {
@@ -204,6 +204,7 @@ function directive(g, kind, arg, push) {
     case "target": m = arg.match(/^(\w+)(?:\s+start=(-?\d+))?$/); g.target.set(m[1], { start: m[2] === undefined ? 0 : +m[2] }); break;
     case "score": m = arg.match(/^(\w+)\s+(=?)([+-]?\d+)\s+(target|pick)$/); g.score.set(m[1], { absolute: !!m[2], value: +m[3], who: m[4] }); break;
     case "check": m = arg.match(/^(\w+)\s+"(.*)"\s*(<=|>=|==|<|>)\s*(-?\d+)$/); push(g.check, m[1], { label: m[2], op: m[3], n: +m[4] }); break;
+    case "fact": { const [name, ...ids] = arg.split(/\s+/); ids.forEach((id) => g.fact.set(id, name)); break; }
     default: g.unparsed.push(`@${kind} ${arg}`);
   }
 }
@@ -212,14 +213,31 @@ const OPS = { "<=": (a, b) => a <= b, ">=": (a, b) => a >= b, "==": (a, b) => a 
 const isEnd = (g, id) => g.nodes.get(id)?.kind === "end";
 
 // ---------------- Validate (state-aware) ----------------
+const answer = (label) => (/^yes\b/i.test(label) ? "yes" : /^no\b/i.test(label) ? "no" : label);
+// Edge forced by walker state: dispatch on a state key, or a fact already answered earlier in the walk.
+function forcedEdge(g, id, st) {
+  const outs = g.out.get(id) || [];
+  const key = g.dispatch.get(id);
+  if (key) return outs.find((e) => e.label === st[key]) || null;
+  const f = g.fact.get(id);
+  if (f && st["fact:" + f] !== undefined) return outs.find((e) => answer(e.label) === st["fact:" + f]) || null;
+  return null;
+}
+function nextState(g, st, e) {
+  const ns = { ...st };
+  const f = g.fact.get(e.from);
+  if (f) ns["fact:" + f] = answer(e.label);
+  const s = g.set.get(e.to);
+  if (s) ns[s[0]] = s[1];
+  return ns;
+}
 function successors(g, [id, st]) {
   const res = [];
+  const forced = g.dispatch.has(id) || (g.fact.has(id) && st["fact:" + g.fact.get(id)] !== undefined);
+  const f = forced && forcedEdge(g, id, st);
   for (const e of g.out.get(id) || []) {
-    const key = g.dispatch.get(id);
-    if (key && e.label !== st[key]) continue;
-    const ns = { ...st };
-    const s = g.set.get(e.to);
-    if (s) ns[s[0]] = s[1];
+    if (forced && e !== f) continue;
+    const ns = nextState(g, st, e);
     res.push([e.to, ns]);
   }
   return res;
@@ -244,6 +262,11 @@ function validate(g) {
     if (!g.nodes.has(id)) issues.push(`Walker rule names unknown node: ${id}`);
   for (const [id, cs] of g.check) for (const c of cs)
     if (!(g.out.get(id) || []).some((e) => e.label === c.label)) issues.push(`@check ${id} "${c.label}" matches no edge`);
+  for (const [id, f] of g.fact) {
+    if (!g.nodes.has(id)) { issues.push(`@fact ${f} names unknown node: ${id}`); continue; }
+    const vals = (g.out.get(id) || []).map((e) => answer(e.label)).sort().join(",");
+    if (vals !== "no,yes") issues.push(`@fact ${f}: answers at ${id} must start with Yes / No`);
+  }
   if (g.unparsed.length) issues.push(...g.unparsed.map((l) => `Unparsed line: ${l}`));
   const all = explore(g, ["START", { ...g.start }]);
   const reached = new Set([...all.values()].map(([id]) => id));
@@ -289,8 +312,7 @@ function snapshot() { return { node: walk.node, st: { ...walk.st }, target: walk
 function go(edge, auto = false) {
   walk.history.push(snapshot());
   walk.log.push({ from: edge.from, label: edge.label, auto });
-  const s = G.set.get(edge.to);
-  if (s) walk.st[s[0]] = s[1];
+  walk.st = nextState(G, walk.st, edge);
   enter(edge.to);
 }
 function enter(id) {
@@ -298,11 +320,8 @@ function enter(id) {
   walk.pick = null;
   const sc = G.score.get(id);
   if (sc && sc.who === "target" && walk.target) applyScore(walk.target, sc);
-  const dkey = G.dispatch.get(id);
-  if (dkey) {
-    const e = (G.out.get(id) || []).find((x) => x.label === walk.st[dkey]);
-    if (e) return go(e, true);
-  }
+  const e = forcedEdge(G, id, walk.st);
+  if (e) return go(e, true);
   renderWalk();
 }
 function back() {
@@ -310,7 +329,7 @@ function back() {
   if (!h) return;
   walk.node = h.node; walk.st = h.st; walk.target = h.target; walk.log.length = h.log;
   setMembers(h.members);
-  if (G.dispatch.has(walk.node) && walk.history.length) return back();
+  if (forcedEdge(G, walk.node, walk.st) && walk.history.length) return back();
   renderWalk();
 }
 function jumpTo(i) {
@@ -388,6 +407,8 @@ function renderWalk() {
   if (walk.st.intent) bs[i++].textContent = walk.st.intent;
   bs[i++].textContent = walk.st.who || "—";
   if (walk.target) bs[i].textContent = walk.target;
+  for (const [k, v] of Object.entries(walk.st)) if (k.startsWith("fact:"))
+    chips.append(el("span", { className: "chip", textContent: `Remembered: ${k.slice(5)} = ${v}` }));
 
   // Trail
   const trail = $("#trail");

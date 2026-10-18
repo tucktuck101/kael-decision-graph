@@ -57,6 +57,7 @@ The lines at the top of the Mermaid block that start with `%% @` are comments, s
 - where combat intent is set (`@set`) and where routing depends on it (`@dispatch`)
 - the score events (`@event`) and where scores change (`@score`, `@target`)
 - which answers the score can suggest (`@check`)
+- facts that can't change within an encounter (`@fact`), such as whether she's elderly or a party member. The first answer is remembered and later questions about the same fact are answered automatically.
 
 If you rename or remove a node, update the matching `@` lines. The health check flags any rule that points at a missing node or answer.
 
