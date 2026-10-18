@@ -600,7 +600,8 @@ function routeStats(g) {
   const cat = new Map(g.category.map((c) => [k(c.from, c.label), c.name]));
   const flag = new Map(g.flag.map((c) => [k(c.from, c.label), c.name]));
   const byEnd = zero(), byCat = new Map();
-  let total = 0, shortest = null, longest = null;
+  let total = 0, shortest = null, longest = null, dramatic = null;
+  const quickest = {}, lastStep = Object.fromEntries(ends.map((e) => [e, new Map()])), hits = new Map();
   const visited = new Set(["START"]), path = [], t0 = performance.now();
   (function dfs(s, c, flags) {
     const id = s[0];
@@ -610,6 +611,12 @@ function routeStats(g) {
       (byCat.get(key) || byCat.set(key, zero()).get(key))[id]++;
       if (!shortest || path.length < shortest.length) shortest = [...path];
       if (!longest || path.length > longest.length) longest = [...path];
+      if (!quickest[id] || path.length < quickest[id].length) quickest[id] = [...path];
+      const last = path[path.length - 1], lk = k(last.from, last.label);
+      lastStep[id].set(lk, (lastStep[id].get(lk) || { edge: last, n: 0 })).get(lk).n++;
+      let mono = 0;
+      for (const e of path) { hits.set(e.to, (hits.get(e.to) || 0) + 1); if (g.classes.get(e.to) === "monologue") mono++; }
+      if (!dramatic || mono > dramatic.n) dramatic = { n: mono, route: [...path] };
       return;
     }
     for (const t of successors(g, s)) {
@@ -620,7 +627,35 @@ function routeStats(g) {
       path.pop(); visited.delete(t[0]);
     }
   })(["START", { ...g.start }], null, []);
-  return { ends, total, byEnd, byCat, shortest, longest, ms: performance.now() - t0, loops: loopGroups(g) };
+  return { ends, total, byEnd, byCat, shortest, longest, quickest, lastStep, hits, dramatic,
+    ms: performance.now() - t0, loops: loopGroups(g), odds: coinFlipOdds(g, ends) };
+}
+// Every answer equally likely (forced answers count as certain). Loops included: absorbing-chain probabilities.
+function coinFlipOdds(g, ends) {
+  const all = explore(g, ["START", { ...g.start }]);
+  const keys = [...all.keys()], idx = new Map(keys.map((k, i) => [k, i]));
+  const succ = keys.map((k) => successors(g, all.get(k)).map((t) => idx.get(keyOf(t))));
+  const endOf = keys.map((k) => (g.nodes.get(all.get(k)[0]).kind === "end" ? all.get(k)[0] : null));
+  const p = keys.map((_, i) => Object.fromEntries(ends.map((e) => [e, endOf[i] === e ? 1 : 0])));
+  const steps = keys.map(() => 0);
+  for (let iter = 0; iter < 5000; iter++) {
+    let delta = 0;
+    for (let i = 0; i < keys.length; i++) {
+      if (endOf[i] || !succ[i].length) continue;
+      const w = 1 / succ[i].length;
+      let s = 1;
+      for (const e of ends) {
+        let v = 0;
+        for (const j of succ[i]) v += w * p[j][e];
+        delta = Math.max(delta, Math.abs(v - p[i][e])); p[i][e] = v;
+      }
+      for (const j of succ[i]) s += w * steps[j];
+      delta = Math.max(delta, Math.abs(s - steps[i]) / 1000); steps[i] = s;
+    }
+    if (delta < 1e-10) break;
+  }
+  const start = idx.get(keyOf(["START", { ...g.start }]));
+  return { p: p[start], steps: steps[start] };
 }
 // Groups of nodes that can lead back into themselves (strongly connected components).
 function loopGroups(g) {
@@ -685,7 +720,58 @@ function renderStats() {
       ? `${grp.length} nodes: ${grp.map(text).join(" · ")}`
       : `${grp.length} nodes across ${[...new Set(grp.map(secTitle))].join(", ")}` }))));
 
-  box.replaceChildren(summary, endings, who, routeCard("Shortest route", s.shortest), routeCard("Longest route", s.longest), loops);
+  // ---- Did you know? ----
+  const pctOf = (n, d) => (d ? ((100 * n) / d).toFixed(n / d < 0.01 ? 2 : 1) : "0") + "%";
+  const walkBtn = (route) => { const b = el("button", { className: "btn small", textContent: "Walk this route" }); b.onclick = () => replay(route); return b; };
+  const fact = (title, ...body) => el("div", { style: "margin-bottom:1.1rem" }, el("h3", { style: "margin:.2rem 0 .4rem;font-size:1rem", textContent: title }), ...body);
+  const ul = (items) => el("ul", { style: "margin:.2rem 0;padding-left:1.2rem" }, ...items.map((x) => (x instanceof Node ? (x.tagName === "LI" ? x : el("li", {}, x)) : el("li", { textContent: x }))));
+
+  const odds = fact(`If every answer were a coin flip (about ${Math.round(s.odds.steps)} steps per encounter on average)`,
+    el("table", { className: "stats" }, ...s.ends.map((e) => el("tr", {}, el("td", { textContent: text(e) }),
+      el("td", { className: "n", textContent: (100 * s.odds.p[e]).toFixed(1) + "%" }),
+      el("td", { style: "width:35%" }, el("div", { className: "bar", style: `width:${100 * s.odds.p[e]}%` }))))),
+    el("p", { className: "status", textContent: "Counts loops too: retries, fights that continue and hunts can go round any number of times." }));
+
+  const quick = fact("Quickest way to each ending", ul(s.ends.filter((e) => s.quickest[e]).map((e) => {
+    const r = s.quickest[e];
+    return el("li", {}, el("b", { textContent: `${short(e)} in ${r.length} steps: ` }),
+      el("span", { textContent: r.map((x) => (x.label ? `${text(x.from)} ${x.label}` : text(x.from))).slice(1).join(" → ") + " " }), walkBtn(r));
+  })));
+
+  const causes = fact("What usually happens right before each ending", ul(s.ends.map((e) => {
+    const top = [...s.lastStep[e].values()].sort((a, b) => b.n - a.n).slice(0, 3);
+    return el("li", {}, el("b", { textContent: short(e) + ": " }),
+      el("span", { textContent: top.map((x) => `"${text(x.edge.from)}"${x.edge.label ? ` → ${x.edge.label}` : ""} (${pctOf(x.n, s.byEnd[e])})`).join(" · ") }));
+  })));
+
+  const sized = cats.filter(([, , t]) => t >= 50);
+  const likely = fact("Who is most likely to cause each ending (groups with at least 50 routes)", ul(s.ends.map((e) => {
+    const [name, row, t] = sized.reduce((best, c) => (c[1][e] / c[2] > best[1][e] / best[2] ? c : best));
+    return `${text(e)}: ${name} (${pctOf(row[e], t)} of their routes)`;
+  })));
+
+  const never = fact("Things that can never happen", ul(s.ends.flatMap((e) => {
+    const none = cats.filter(([, row]) => row[e] === 0).map(([name]) => name);
+    const some = cats.filter(([, row]) => row[e] > 0).map(([name]) => name);
+    if (!none.length) return [];
+    return [none.length > some.length ? `Only ${some.join("; ")} can end in ${text(e)}` : `Never ${text(e)}: ${none.join("; ")}`];
+  })));
+
+  const monoNodes = [...G.nodes.keys()].filter((id) => G.classes.get(id) === "monologue")
+    .map((id) => [id, s.hits.get(id) || 0]).sort((a, b) => b[1] - a[1]);
+  const drama = fact(`Most dramatic route: ${s.dramatic.n} inner-monologue lines`,
+    el("p", { style: "margin:.2rem 0", textContent: s.dramatic.route.filter((e) => G.classes.get(e.to) === "monologue").map((e) => `"${text(e.to)}"`).join(" → ") + ` → ${text(s.dramatic.route.at(-1).to)} ` }),
+    walkBtn(s.dramatic.route));
+  const catch_ = fact("How often each inner-monologue line comes up (share of all routes)",
+    el("table", { className: "stats" }, ...monoNodes.map(([id, n]) => el("tr", {}, el("td", { textContent: `"${text(id)}"` }), el("td", { className: "n", textContent: n ? pctOf(n, s.total) : "only when something loops" })))));
+
+  const busy = [...s.hits.entries()].filter(([id]) => G.nodes.get(id).kind === "action" && G.classes.get(id) !== "monologue")
+    .sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const funnel = fact("Most common things Kael does (share of all routes)",
+    el("table", { className: "stats" }, ...busy.map(([id, n]) => el("tr", {}, el("td", { textContent: text(id) }), el("td", { className: "n", textContent: pctOf(n, s.total) })))));
+
+  const facts = el("div", { className: "card" }, el("h2", { textContent: "Did you know?" }), odds, quick, causes, likely, never, drama, catch_, funnel);
+  box.replaceChildren(summary, facts, endings, who, routeCard("Shortest route", s.shortest), routeCard("Longest route", s.longest), loops);
 }
 
 // ---------------- Tabs ----------------

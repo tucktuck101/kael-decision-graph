@@ -25,6 +25,14 @@ How Kael, a D&D character, decides what to do when he meets a creature: whether 
   - Your current walk is highlighted.
 - **Party**: a relationship score for each party member, saved in your browser.
 - **Stats**: every possible loop-free route, recalculated from the current graph.
+  - **Did you know?**, which covers:
+    - the odds of each ending if every answer were a coin flip
+    - the quickest route to each ending
+    - what usually happens right before each ending, and who is most likely to cause it
+    - things that can never happen
+    - the most dramatic route
+    - how often each inner-monologue line comes up
+    - the most common things Kael does
   - Counts by ending and by who Kael meets.
   - The shortest and longest routes, each with a "Walk this route" button.
   - The groups of nodes that can loop back on themselves.
