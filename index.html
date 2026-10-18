@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kael's Decision Graph</title>
+<style>
+  :root {
+    --bg: #faf7f2; --fg: #1f1b16; --muted: #6b6258; --card: #fff; --border: #e3dbcf;
+    --accent: #7a3cc2; --accent-fg: #fff; --good: #2f8a55; --bad: #c0392b; --warn: #b7791f;
+    --mono: #fff4d6; --mono-fg: #5a3d00; --end: #e6f4e8; --end-fg: #164e30; --intent: #fde8e8; --intent-fg: #6b1a12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17151a; --fg: #ece8f1; --muted: #a39cab; --card: #221f27; --border: #37323e;
+      --accent: #a774e8; --accent-fg: #120d18; --mono: #3b3018; --mono-fg: #f6dfa4; --end: #183424; --end-fg: #bfe8cc;
+      --intent: #3d1c1c; --intent-fg: #f5c2bc;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.25rem; padding: .75rem 1.25rem; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 1.15rem; margin: 0; }
+  nav { display: flex; gap: .25rem; }
+  nav button, .btn { border: 1px solid var(--border); background: var(--card); color: var(--fg); padding: .45rem .9rem; border-radius: .5rem; cursor: pointer; font: inherit; }
+  nav button.active, .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.small { padding: .2rem .55rem; font-size: .85rem; }
+  #sections .btn.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  #health { margin-left: auto; font-size: .85rem; color: var(--muted); }
+  #health.bad { color: var(--bad); font-weight: 600; }
+  main { padding: 1.25rem; }
+  .hidden { display: none !important; }
+
+  /* Walk */
+  #walk { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 1.25rem; max-width: 1150px; margin: 0 auto; }
+  @media (max-width: 860px) { #walk { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: .9rem; padding: 1.25rem 1.4rem; }
+  #node-card { min-height: 260px; display: flex; flex-direction: column; gap: 1rem; }
+  #node-card.monologue { background: var(--mono); color: var(--mono-fg); }
+  #node-card.intent { background: var(--intent); color: var(--intent-fg); }
+  #node-card.end { background: var(--end); color: var(--end-fg); text-align: center; justify-content: center; }
+  .kind { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; opacity: .7; }
+  .text { font-size: 1.6rem; font-weight: 650; line-height: 1.25; }
+  #node-card.end .text { font-size: 2.2rem; }
+  .choices { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .choices .btn { font-size: 1rem; padding: .6rem 1rem; }
+  .choices .btn.suggested { outline: 3px solid var(--good); outline-offset: 1px; }
+  .note { font-size: .9rem; color: inherit; opacity: .8; }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .chip { font-size: .8rem; padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .chip b { color: var(--fg); }
+  select, input[type=text] { font: inherit; padding: .35rem .5rem; border-radius: .4rem; border: 1px solid var(--border); background: var(--card); color: var(--fg); }
+  #trail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; max-height: 60vh; overflow: auto; font-size: .9rem; }
+  #trail li { padding: .3rem .45rem; border-radius: .35rem; cursor: pointer; }
+  #trail li:hover { background: var(--border); }
+  #trail li .ans { color: var(--accent); font-weight: 600; }
+  #trail li.auto { color: var(--muted); font-style: italic; }
+  aside h2, .card h2 { font-size: .95rem; margin: 0 0 .6rem; }
+
+  /* Map */
+  #map { display: flex; flex-direction: column; gap: .75rem; }
+  #map-bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  #sections { display: flex; flex-wrap: wrap; gap: .25rem; }
+  #viewport { position: relative; height: calc(100vh - 190px); min-height: 420px; overflow: hidden; border: 1px solid var(--border); border-radius: .9rem; background: var(--card); cursor: grab; touch-action: none; }
+  #viewport.dragging { cursor: grabbing; }
+  #canvas { transform-origin: 0 0; position: absolute; top: 0; left: 0; }
+  #canvas svg { max-width: none !important; }
+  #canvas g.node { cursor: pointer; }
+  #canvas g.node.trail > * { stroke: var(--accent) !important; stroke-width: 3px !important; }
+  #canvas g.node.current > * { stroke: var(--good) !important; stroke-width: 5px !important; }
+  #canvas g.node.flash > * { stroke: var(--warn) !important; stroke-width: 6px !important; }
+  #canvas g.node.stub { opacity: .75; }
+  #search-results { display: flex; flex-wrap: wrap; gap: .3rem; }
+  #node-info { position: absolute; right: .75rem; top: .75rem; width: 300px; max-height: calc(100% - 1.5rem); overflow: auto; font-size: .9rem; cursor: default; }
+  #node-info ul { padding-left: 1.1rem; margin: .3rem 0; }
+  #node-info a { color: var(--accent); cursor: pointer; }
+
+  /* Party */
+  #party { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+  .member { display: grid; grid-template-columns: 1fr auto; gap: .6rem; align-items: center; }
+  .member .name { font-weight: 650; font-size: 1.1rem; }
+  .score { font-size: 1.4rem; font-weight: 800; min-width: 3.2rem; text-align: center; padding: .1rem .5rem; border-radius: .5rem; }
+  .score.best { background: var(--end); color: var(--end-fg); }
+  .score.grudge { background: var(--intent); color: var(--intent-fg); }
+  .status { font-size: .85rem; color: var(--muted); }
+  #error { max-width: 800px; margin: 2rem auto; }
+  code { background: var(--border); padding: .05rem .3rem; border-radius: .25rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kael's Decision Graph</h1>
+  <nav>
+    <button data-tab="walk" class="active">Walk</button>
+    <button data-tab="map">Map</button>
+    <button data-tab="party">Party</button>
+  </nav>
+  <span id="health">Loading…</span>
+</header>
+
+<main>
+  <div id="error" class="card hidden"></div>
+
+  <section id="walk">
+    <div style="display:flex;flex-direction:column;gap:1rem">
+      <div id="node-card" class="card"></div>
+      <div class="row">
+        <button class="btn" id="back">← Back</button>
+        <button class="btn" id="restart">Restart</button>
+        <button class="btn" id="show-on-map">Show on map</button>
+        <div class="chips" id="state-chips"></div>
+      </div>
+    </div>
+    <aside class="card">
+      <h2>Path so far</h2>
+      <ol id="trail"></ol>
+    </aside>
+  </section>
+
+  <section id="map" class="hidden">
+    <div id="map-bar">
+      <div id="sections"></div>
+      <input type="text" id="search" placeholder="Search nodes…" style="min-width:220px">
+      <button class="btn small" id="fit">Fit</button>
+      <button class="btn small" id="zoom-in">+</button>
+      <button class="btn small" id="zoom-out">−</button>
+    </div>
+    <div id="search-results"></div>
+    <div id="viewport">
+      <div id="canvas"></div>
+      <div id="node-info" class="card hidden"></div>
+    </div>
+  </section>
+
+  <section id="party" class="hidden">
+    <div class="card">
+      <h2>Party relationship scores</h2>
+      <p class="status" id="party-rules"></p>
+      <div class="row">
+        <input type="text" id="new-member" placeholder="Party member name">
+        <label class="status"><input type="checkbox" id="new-royal"> Kael's possible child (starts at +5)</label>
+        <button class="btn primary" id="add-member">Add</button>
+      </div>
+    </div>
+    <div id="members" style="display:flex;flex-direction:column;gap:.75rem"></div>
+  </section>
+</main>
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+const SOURCE = "kael-decision-flowchart.md";
+const STORE = "kael-party-v1";
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", securityLevel: "strict",
+  flowchart: { useMaxWidth: false, htmlLabels: true }, maxEdges: 2000, maxTextSize: 200000 });
+
+const $ = (s) => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+// ---------------- Parse ----------------
+function parse(md) {
+  const block = md.split("```mermaid")[1]?.split("```")[0];
+  if (!block) throw new Error(`No mermaid block found in ${SOURCE}.`);
+  const g = { code: block, nodes: new Map(), out: new Map(), into: new Map(), sections: [], classes: new Map(),
+    classDefs: [], set: new Map(), dispatch: new Map(), start: {}, events: [], max: Infinity,
+    target: new Map(), score: new Map(), check: new Map(), unparsed: [] };
+  let cur = null;
+  const push = (map, k, v) => (map.get(k) || map.set(k, []).get(k)).push(v);
+  for (const raw of block.split("\n")) {
+    const ln = raw.trim();
+    let m;
+    if ((m = ln.match(/^%%\s*@(\w+)\s+(.*)$/))) { directive(g, m[1], m[2].trim(), push); continue; }
+    if (!ln || ln.startsWith("%%") || ln.startsWith("flowchart")) continue;
+    if ((m = ln.match(/^subgraph\s+(\w+)\["(.*)"\]$/))) { cur = { id: m[1], title: m[2], nodes: [] }; g.sections.push(cur); continue; }
+    if (ln === "end") { cur = null; continue; }
+    if (ln.startsWith("classDef ")) { g.classDefs.push(ln); continue; }
+    if ((m = ln.match(/^class\s+([\w,]+)\s+(\w+)$/))) { m[1].split(",").forEach((id) => g.classes.set(id, m[2])); continue; }
+    if ((m = ln.match(/^(\w+)\s*-->\s*(?:\|"?(.*?)"?\|\s*)?(\w+)$/))) {
+      const e = { from: m[1], label: m[2] || "", to: m[3] };
+      push(g.out, e.from, e); push(g.into, e.to, e); continue;
+    }
+    if ((m = ln.match(/^(\w+)(\(\[|\[|\{)"(.*)"(\]\)|\]|\})$/))) {
+      const kind = m[2] === "{" ? "decision" : m[2] === "([" ? "end" : "action";
+      g.nodes.set(m[1], { id: m[1], open: m[2], text: m[3], close: m[4], kind, section: cur?.id });
+      cur?.nodes.push(m[1]); continue;
+    }
+    g.unparsed.push(ln);
+  }
+  for (const n of g.nodes.values()) if (n.kind === "end" && g.out.has(n.id)) n.kind = "start";
+  return g;
+}
+
+function directive(g, kind, arg, push) {
+  let m;
+  switch (kind) {
+    case "set": m = arg.match(/^(\w+)\s+(\w+)=(.*)$/); g.set.set(m[1], [m[2], m[3]]); break;
+    case "dispatch": m = arg.match(/^(\w+)\s+(\w+)$/); g.dispatch.set(m[1], m[2]); break;
+    case "start": m = arg.match(/^(\w+)=(.*)$/); g.start[m[1]] = m[2]; break;
+    case "event": m = arg.match(/^"(.*)"\s+([+-]?\d+)$/); g.events.push({ name: m[1], delta: +m[2] }); break;
+    case "max": g.max = +arg; break;
+    case "target": m = arg.match(/^(\w+)(?:\s+start=(-?\d+))?$/); g.target.set(m[1], { start: m[2] === undefined ? 0 : +m[2] }); break;
+    case "score": m = arg.match(/^(\w+)\s+(=?)([+-]?\d+)\s+(target|pick)$/); g.score.set(m[1], { absolute: !!m[2], value: +m[3], who: m[4] }); break;
+    case "check": m = arg.match(/^(\w+)\s+"(.*)"\s*(<=|>=|==|<|>)\s*(-?\d+)$/); push(g.check, m[1], { label: m[2], op: m[3], n: +m[4] }); break;
+    default: g.unparsed.push(`@${kind} ${arg}`);
+  }
+}
+
+const OPS = { "<=": (a, b) => a <= b, ">=": (a, b) => a >= b, "==": (a, b) => a === b, "<": (a, b) => a < b, ">": (a, b) => a > b };
+const isEnd = (g, id) => g.nodes.get(id)?.kind === "end";
+
+// ---------------- Validate (state-aware) ----------------
+function successors(g, [id, st]) {
+  const res = [];
+  for (const e of g.out.get(id) || []) {
+    const key = g.dispatch.get(id);
+    if (key && e.label !== st[key]) continue;
+    const ns = { ...st };
+    const s = g.set.get(e.to);
+    if (s) ns[s[0]] = s[1];
+    res.push([e.to, ns]);
+  }
+  return res;
+}
+const keyOf = ([id, st]) => id + "|" + JSON.stringify(st);
+function explore(g, start) {
+  const seen = new Map(), stack = [start];
+  while (stack.length) {
+    const s = stack.pop(), k = keyOf(s);
+    if (seen.has(k)) continue;
+    seen.set(k, s); stack.push(...successors(g, s));
+  }
+  return seen;
+}
+function validate(g) {
+  const issues = [];
+  const refs = new Set();
+  for (const [from, es] of g.out) { refs.add(from); es.forEach((e) => refs.add(e.to)); }
+  for (const r of refs) if (!g.nodes.has(r)) issues.push(`Undeclared node: ${r}`);
+  for (const id of g.nodes.keys()) if (!refs.has(id)) issues.push(`Unused node: ${id}`);
+  for (const id of [...g.set.keys(), ...g.dispatch.keys(), ...g.target.keys(), ...g.score.keys(), ...g.check.keys()])
+    if (!g.nodes.has(id)) issues.push(`Walker rule names unknown node: ${id}`);
+  for (const [id, cs] of g.check) for (const c of cs)
+    if (!(g.out.get(id) || []).some((e) => e.label === c.label)) issues.push(`@check ${id} "${c.label}" matches no edge`);
+  if (g.unparsed.length) issues.push(...g.unparsed.map((l) => `Unparsed line: ${l}`));
+  const all = explore(g, ["START", { ...g.start }]);
+  const reached = new Set([...all.values()].map(([id]) => id));
+  for (const id of g.nodes.keys()) if (!reached.has(id)) issues.push(`Unreachable: ${id}`);
+  // Reverse search: states that can reach an ending
+  const pred = new Map();
+  for (const [k, s] of all) for (const t of successors(g, s)) (pred.get(keyOf(t)) || pred.set(keyOf(t), []).get(keyOf(t))).push(k);
+  const good = new Set(), q = [...all.keys()].filter((k) => isEnd(g, all.get(k)[0]));
+  q.forEach((k) => good.add(k));
+  while (q.length) for (const p of pred.get(q.pop()) || []) if (!good.has(p)) { good.add(p); q.push(p); }
+  const stuck = new Set();
+  for (const [k, [id]] of all) if (!good.has(k)) stuck.add(id);
+  for (const id of stuck) issues.push(`Can never reach an ending: ${id}`);
+  return { issues, nodes: g.nodes.size, edges: [...g.out.values()].reduce((n, es) => n + es.length, 0) };
+}
+
+// ---------------- Party store ----------------
+const party = {
+  load() { try { return JSON.parse(localStorage.getItem(STORE)) || []; } catch { return []; } },
+  save(list) { localStorage.setItem(STORE, JSON.stringify(list)); },
+};
+let members = party.load();
+function setMembers(list) { members = list; party.save(list); renderParty(); }
+function applyScore(name, change) {
+  const list = members.map((m) => ({ ...m }));
+  const m = list.find((x) => x.name === name);
+  if (!m) return;
+  m.score = Math.min(G.max, change.absolute ? change.value : m.score + change.value);
+  setMembers(list);
+}
+function ensureMember(name, start) {
+  if (!name || members.some((m) => m.name === name)) return;
+  setMembers([...members, { name, score: Math.min(G.max, start) }]);
+}
+
+// ---------------- Walker ----------------
+let G, walk;
+function newWalk() {
+  walk = { node: "START", st: { ...G.start }, target: null, history: [], log: [] };
+  enter("START");
+}
+function snapshot() { return { node: walk.node, st: { ...walk.st }, target: walk.target, members: structuredClone(members), log: walk.log.length }; }
+function go(edge, auto = false) {
+  walk.history.push(snapshot());
+  walk.log.push({ from: edge.from, label: edge.label, auto });
+  const s = G.set.get(edge.to);
+  if (s) walk.st[s[0]] = s[1];
+  enter(edge.to);
+}
+function enter(id) {
+  walk.node = id;
+  walk.pick = null;
+  const sc = G.score.get(id);
+  if (sc && sc.who === "target" && walk.target) applyScore(walk.target, sc);
+  const dkey = G.dispatch.get(id);
+  if (dkey) {
+    const e = (G.out.get(id) || []).find((x) => x.label === walk.st[dkey]);
+    if (e) return go(e, true);
+  }
+  renderWalk();
+}
+function back() {
+  const h = walk.history.pop();
+  if (!h) return;
+  walk.node = h.node; walk.st = h.st; walk.target = h.target; walk.log.length = h.log;
+  setMembers(h.members);
+  if (G.dispatch.has(walk.node) && walk.history.length) return back();
+  renderWalk();
+}
+function jumpTo(i) {
+  while (walk.log.length > i) back();
+}
+
+function memberPicker(onPick, { allowNew = true, start = 0, label = "Party member" } = {}) {
+  const sel = el("select", {}, el("option", { value: "", textContent: `— ${label} —` }),
+    ...members.map((m) => el("option", { value: m.name, textContent: `${m.name} (${fmt(m.score)})` })));
+  const inp = el("input", { type: "text", placeholder: "or add new…" });
+  const ok = el("button", { className: "btn small", textContent: "Set" });
+  ok.onclick = () => {
+    const name = inp.value.trim() || sel.value;
+    if (!name) return;
+    if (allowNew) ensureMember(name, start);
+    onPick(name);
+  };
+  return el("div", { className: "row" }, sel, ...(allowNew ? [inp] : []), ok);
+}
+const fmt = (n) => (n > 0 ? "+" + n : String(n));
+
+function renderWalk() {
+  const n = G.nodes.get(walk.node);
+  const card = $("#node-card");
+  const cls = G.classes.get(n.id);
+  card.className = "card " + (n.kind === "end" ? "end" : cls === "monologue" ? "monologue" : cls === "intent" ? "intent" : "");
+  card.replaceChildren();
+  const kind = n.kind === "end" ? "Ending" : n.kind === "start" ? "New encounter" : n.kind === "decision" ? "Question" : cls === "monologue" ? "Kael thinks" : cls === "intent" ? "Combat intent" : "Action";
+  card.append(el("div", { className: "kind", textContent: kind }), el("div", { className: "text", textContent: n.text }));
+
+  // Party target selection
+  const tgt = G.target.get(n.id);
+  if (tgt) {
+    card.append(el("div", { className: "note", textContent: walk.target ? `Dealing with: ${walk.target}` : "Which party member is this about?" }));
+    card.append(memberPicker((name) => { walk.target = name; renderWalk(); }, { start: tgt.start }));
+    if (walk.target) {
+      const m = members.find((x) => x.name === walk.target);
+      if (m) card.append(el("div", { className: "row" }, el("span", { className: "note", textContent: `${m.name}: ${fmt(m.score)}. Record what happened:` }),
+        ...G.events.map((ev) => { const b = el("button", { className: "btn small", textContent: `${ev.name} ${fmt(ev.delta)}` });
+          b.onclick = () => { applyScore(m.name, { absolute: false, value: ev.delta }); renderWalk(); }; return b; })));
+    }
+  }
+  // Score change applied on this node
+  const sc = G.score.get(n.id);
+  if (sc) {
+    const what = sc.absolute ? `set to ${fmt(sc.value)}` : fmt(sc.value);
+    if (sc.who === "target") card.append(el("div", { className: "note", textContent: walk.target ? `Applied ${what} to ${walk.target}.` : `No party member selected, so ${what} was not tracked.` }));
+    else if (walk.pick) card.append(el("div", { className: "note", textContent: `Applied ${what} to ${walk.pick}.` }));
+    else card.append(el("div", { className: "note", textContent: `Who gets ${what}?` }),
+      memberPicker((name) => { applyScore(name, sc); walk.pick = name; renderWalk(); }, { label: "Party member" }));
+  }
+
+  // Choices
+  const outs = G.out.get(n.id) || [];
+  const target = members.find((x) => x.name === walk.target);
+  const suggest = new Set((G.check.get(n.id) || []).filter((c) => target && OPS[c.op](target.score, c.n)).map((c) => c.label));
+  if (suggest.size) card.append(el("div", { className: "note", textContent: `Suggested by ${target.name}'s score (${fmt(target.score)}).` }));
+  const box = el("div", { className: "choices" });
+  if (n.kind === "end") {
+    const b = el("button", { className: "btn primary", textContent: "Start a new encounter" }); b.onclick = newWalk; box.append(b);
+  } else for (const e of outs) {
+    const b = el("button", { className: "btn" + (suggest.has(e.label) ? " suggested primary" : ""), textContent: e.label || "Continue →" });
+    b.onclick = () => go(e);
+    box.append(b);
+  }
+  card.append(box);
+
+  // Chips
+  const chips = $("#state-chips");
+  chips.replaceChildren(
+    ...(walk.st.intent ? [el("span", { className: "chip", innerHTML: `Intent: <b></b>` })] : []),
+    el("span", { className: "chip", innerHTML: `Dealing with: <b></b>` }),
+    ...(walk.target ? [el("span", { className: "chip", innerHTML: `Party member: <b></b>` })] : []));
+  const bs = chips.querySelectorAll("b"); let i = 0;
+  if (walk.st.intent) bs[i++].textContent = walk.st.intent;
+  bs[i++].textContent = walk.st.who || "—";
+  if (walk.target) bs[i].textContent = walk.target;
+
+  // Trail
+  const trail = $("#trail");
+  trail.replaceChildren(...walk.log.map((s, idx) => {
+    const li = el("li", { className: s.auto ? "auto" : "" });
+    li.append(el("span", { textContent: G.nodes.get(s.from).text + " " }), el("span", { className: "ans", textContent: s.label ? `→ ${s.label}` : "→" }));
+    li.title = "Go back to this step";
+    li.onclick = () => jumpTo(idx);
+    return li;
+  }));
+  trail.scrollTop = trail.scrollHeight;
+  $("#back").disabled = !walk.history.length;
+}
+
+// ---------------- Map ----------------
+let view = { x: 0, y: 0, k: 1 }, currentSection = "ALL", renderSeq = 0;
+const stripLabel = (t) => t.replace(/"/g, "'");
+function sectionCode(secId) {
+  if (secId === "ALL") return G.code;
+  const sec = G.sections.find((s) => s.id === secId);
+  const inside = new Set(sec.nodes);
+  const lines = ["flowchart TD"];
+  const decl = (n) => `${n.id}${n.open}"${n.text}"${n.close}`;
+  sec.nodes.forEach((id) => lines.push("  " + decl(G.nodes.get(id))));
+  const stubs = new Map();
+  const stub = (id) => {
+    if (!stubs.has(id)) {
+      const n = G.nodes.get(id), s = G.sections.find((x) => x.id === n.section);
+      stubs.set(id, `ext__${id}`);
+      lines.push(`  ext__${id}["↪ ${stripLabel(s ? s.title : "")}: ${stripLabel(n.text)}"]`);
+    }
+    return stubs.get(id);
+  };
+  for (const [from, es] of G.out) for (const e of es) {
+    const a = inside.has(from), b = inside.has(e.to);
+    if (!a && !b) continue;
+    const l = e.label ? `|"${stripLabel(e.label)}"|` : "";
+    lines.push(`  ${a ? from : stub(from)} -->${l} ${b ? e.to : stub(e.to)}`);
+  }
+  G.classDefs.forEach((c) => lines.push("  " + c));
+  lines.push("  classDef stub stroke-dasharray:5 4");
+  for (const [id, c] of G.classes) if (inside.has(id)) lines.push(`  class ${id} ${c}`);
+  if (stubs.size) lines.push(`  class ${[...stubs.values()].join(",")} stub`);
+  return lines.join("\n");
+}
+function nodeIdOf(g) {
+  const d = g.getAttribute("data-id");
+  if (d) return d;
+  const m = g.id.match(/flowchart-(.+)-\d+$/);
+  return m ? m[1] : null;
+}
+async function renderMap(secId = currentSection, focus = null) {
+  currentSection = secId;
+  document.querySelectorAll("#sections button").forEach((b) => b.classList.toggle("active", b.dataset.sec === secId));
+  const seq = ++renderSeq;
+  const { svg } = await mermaid.render(`m${seq}`, sectionCode(secId));
+  if (seq !== renderSeq) return;
+  const canvas = $("#canvas");
+  canvas.innerHTML = svg;
+  canvas.querySelectorAll("g.node").forEach((g) => {
+    let id = nodeIdOf(g);
+    if (!id) return;
+    if (id.startsWith("ext__")) { g.classList.add("stub"); id = id.slice(5); g.dataset.real = id; }
+    g.dataset.node = id;
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); g.classList.contains("stub") ? openNode(id) : showInfo(id); });
+  });
+  markTrail();
+  if (focus) centerOn(focus); else fit();
+}
+function nodeEl(id) { return [...document.querySelectorAll("#canvas g.node")].find((g) => g.dataset.node === id && !g.classList.contains("stub")); }
+function markTrail() {
+  if (!walk) return;
+  const ids = new Set(walk.log.map((s) => s.from));
+  document.querySelectorAll("#canvas g.node").forEach((g) => {
+    g.classList.toggle("trail", !g.classList.contains("stub") && ids.has(g.dataset.node));
+    g.classList.toggle("current", !g.classList.contains("stub") && g.dataset.node === walk.node);
+  });
+}
+function applyView() { $("#canvas").style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`; }
+function fit() {
+  const svg = $("#canvas svg"); if (!svg) return;
+  const vp = $("#viewport").getBoundingClientRect();
+  const w = svg.width.baseVal.value || svg.getBBox().width, h = svg.height.baseVal.value || svg.getBBox().height;
+  view.k = Math.min(vp.width / w, vp.height / h, 1.5) * 0.95;
+  view.x = (vp.width - w * view.k) / 2; view.y = 10;
+  applyView();
+}
+function centerOn(id) {
+  const g = nodeEl(id); if (!g) return;
+  view.k = Math.max(view.k, 0.9); applyView();
+  const vp = $("#viewport").getBoundingClientRect(), r = g.getBoundingClientRect();
+  view.x += vp.left + vp.width / 2 - (r.left + r.width / 2);
+  view.y += vp.top + vp.height / 2 - (r.top + r.height / 2);
+  applyView();
+  g.classList.add("flash"); setTimeout(() => g.classList.remove("flash"), 1600);
+  showInfo(id);
+}
+function zoomAt(factor, cx, cy) {
+  const k = Math.min(4, Math.max(0.05, view.k * factor));
+  view.x = cx - (cx - view.x) * (k / view.k); view.y = cy - (cy - view.y) * (k / view.k); view.k = k; applyView();
+}
+function openNode(id) {
+  const sec = G.nodes.get(id).section || "ALL";
+  if (currentSection === sec || currentSection === "ALL") return centerOn(id);
+  renderMap(sec, id);
+}
+function showInfo(id) {
+  const n = G.nodes.get(id), box = $("#node-info");
+  const sec = G.sections.find((s) => s.id === n.section);
+  const link = (nid, pre) => { const a = el("a", { textContent: `${pre}${G.nodes.get(nid).text}` }); a.onclick = () => openNode(nid); return a; };
+  box.replaceChildren(
+    el("div", { className: "kind", textContent: `${sec ? sec.title : ""} · ${id}` }),
+    el("p", { innerHTML: "" }, el("b", { textContent: n.text })),
+    el("div", { textContent: "Comes from:" }),
+    el("ul", {}, ...(G.into.get(id) || []).map((e) => el("li", {}, link(e.from, ""), el("span", { textContent: e.label ? ` (${e.label})` : "" })))),
+    el("div", { textContent: "Leads to:" }),
+    el("ul", {}, ...(G.out.get(id) || []).map((e) => el("li", {}, el("span", { textContent: e.label ? `${e.label}: ` : "" }), link(e.to, "")))));
+  const walkHere = el("button", { className: "btn small", textContent: "Walk from here" });
+  walkHere.onclick = () => { walk.history.push(snapshot()); walk.log.push({ from: walk.node, label: `jumped to ${n.text}`, auto: true }); enter(id); switchTab("walk"); };
+  const close = el("button", { className: "btn small", textContent: "Close" });
+  close.onclick = () => box.classList.add("hidden");
+  box.append(el("div", { className: "row" }, walkHere, close));
+  box.classList.remove("hidden");
+}
+function setupMap() {
+  const secs = $("#sections");
+  const mk = (id, title) => { const b = el("button", { className: "btn small", textContent: title }); b.dataset.sec = id; b.onclick = () => renderMap(id); return b; };
+  secs.replaceChildren(mk("ALL", "Everything"), ...G.sections.map((s) => mk(s.id, s.title)));
+  const vp = $("#viewport");
+  vp.addEventListener("wheel", (e) => { e.preventDefault(); const r = vp.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  let drag = null;
+  vp.addEventListener("pointerdown", (e) => { if (e.target.closest("#node-info") || e.target.closest("g.node")) return; drag = { x: e.clientX, y: e.clientY }; vp.classList.add("dragging"); vp.setPointerCapture(e.pointerId); });
+  vp.addEventListener("pointermove", (e) => { if (!drag) return; view.x += e.clientX - drag.x; view.y += e.clientY - drag.y; drag = { x: e.clientX, y: e.clientY }; applyView(); });
+  vp.addEventListener("pointerup", () => { drag = null; vp.classList.remove("dragging"); });
+  $("#fit").onclick = fit;
+  const mid = () => { const r = vp.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+  $("#zoom-in").onclick = () => zoomAt(1.25, ...mid());
+  $("#zoom-out").onclick = () => zoomAt(0.8, ...mid());
+  $("#search").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase(), res = $("#search-results");
+    if (q.length < 2) return res.replaceChildren();
+    const hits = [...G.nodes.values()].filter((n) => n.text.toLowerCase().includes(q) || n.id.toLowerCase().includes(q)).slice(0, 20);
+    res.replaceChildren(...hits.map((n) => { const b = el("button", { className: "btn small", textContent: n.text }); b.onclick = () => openNode(n.id); return b; }));
+  });
+}
+
+// ---------------- Party UI ----------------
+function renderParty() {
+  if (!G) return;
+  $("#party-rules").textContent = `Range up to ${fmt(G.max)}. ${G.events.map((e) => `${e.name} ${fmt(e.delta)}`).join(", ")}. At ${fmt(G.max)}: bestie (if not hostile). At -5 or lower: fight to the death. Saved in this browser.`;
+  $("#members").replaceChildren(...members.map((m) => {
+    const sc = el("div", { className: "score" + (m.score >= G.max ? " best" : m.score <= -5 ? " grudge" : ""), textContent: fmt(m.score) });
+    const status = m.score >= G.max ? "Bestie material" : m.score <= -5 ? "Kael wants them dead" : m.score < 0 ? "On thin ice" : "Tolerated";
+    const btns = G.events.map((ev) => { const b = el("button", { className: "btn small", textContent: `${ev.name} ${fmt(ev.delta)}` }); b.onclick = () => applyScore(m.name, { absolute: false, value: ev.delta }); return b; });
+    const rm = el("button", { className: "btn small", textContent: "Remove" });
+    rm.onclick = () => confirm(`Remove ${m.name}?`) && setMembers(members.filter((x) => x.name !== m.name));
+    return el("div", { className: "card member" },
+      el("div", {}, el("div", { className: "name", textContent: m.name }), el("div", { className: "status", textContent: status }), el("div", { className: "row", style: "margin-top:.5rem" }, ...btns, rm)),
+      sc);
+  }));
+}
+$("#add-member").onclick = () => {
+  const name = $("#new-member").value.trim();
+  if (!name) return;
+  ensureMember(name, $("#new-royal").checked ? (G.target.get("PRINCESSSTART")?.start ?? 5) : 0);
+  $("#new-member").value = ""; $("#new-royal").checked = false;
+};
+
+// ---------------- Tabs ----------------
+let mapRendered = false;
+function switchTab(tab) {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  for (const t of ["walk", "map", "party"]) $("#" + t).classList.toggle("hidden", t !== tab);
+  if (tab === "map") { if (!mapRendered) { mapRendered = true; renderMap("ALL"); } else markTrail(); }
+}
+document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
+$("#back").onclick = back;
+$("#restart").onclick = newWalk;
+$("#show-on-map").onclick = () => { switchTab("map"); mapRendered = true; openNode(walk.node); };
+
+// ---------------- Boot ----------------
+try {
+  const res = await fetch(SOURCE, { cache: "no-cache" });
+  if (!res.ok) throw new Error(`Could not load ${SOURCE} (HTTP ${res.status}).`);
+  G = parse(await res.text());
+  const v = validate(G);
+  const h = $("#health");
+  if (v.issues.length) { h.className = "bad"; h.textContent = `⚠ ${v.issues.length} graph issue(s)`; h.title = v.issues.join("\n"); console.warn(v.issues); }
+  else h.textContent = `✓ ${v.nodes} nodes · ${v.edges} edges · every path ends`;
+  setupMap(); renderParty(); newWalk();
+} catch (err) {
+  const box = $("#error");
+  box.classList.remove("hidden");
+  box.innerHTML = `<h2>Couldn't load the graph</h2><p></p><p>If you opened this file directly from disk, serve the folder instead, e.g. <code>python3 -m http.server</code> in this folder, then open <code>http://localhost:8000</code>. On GitHub Pages it works as-is.</p>`;
+  box.querySelector("p").textContent = err.message;
+  $("#walk").classList.add("hidden");
+}
+</script>
+</body>
+</html>
